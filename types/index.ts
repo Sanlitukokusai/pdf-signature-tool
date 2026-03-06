@@ -1,4 +1,5 @@
 export interface SignaturePlacement {
+  id: string;
   pageIndex: number;
   x: number;
   y: number;
@@ -20,6 +21,6 @@ export interface AppState {
   pdfBytes: Uint8Array | null;
   signatureImageFile: File | null;
   extractedSignatureDataUrl: string | null;
-  signaturePlacement: SignaturePlacement | null;
+  signaturePlacements: SignaturePlacement[];
   renderedPageDimensions: PageDimensions | null;
 }

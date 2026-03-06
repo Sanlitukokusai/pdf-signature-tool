@@ -2,34 +2,32 @@
 
 import { useState } from "react";
 import { PDFDocument } from "pdf-lib";
-import type { SignaturePlacement, PageDimensions } from "@/types";
+import type { SignaturePlacement } from "@/types";
 
 interface ExportButtonProps {
   pdfBytes: Uint8Array;
   signatureDataUrl: string;
-  placement: SignaturePlacement;
-  renderedPageDimensions: PageDimensions | null;
+  placements: SignaturePlacement[];
+  renderWidth: number;
 }
 
 export default function ExportButton({
   pdfBytes,
   signatureDataUrl,
-  placement,
-  renderedPageDimensions,
+  placements,
+  renderWidth,
 }: ExportButtonProps) {
   const [exporting, setExporting] = useState(false);
 
   // Pre-rotate the signature image using Canvas so the exported PDF matches the preview.
-  // This avoids pdf-lib's rotation (which rotates counter-clockwise, opposite to CSS).
-  const getRotatedSignatureBytes = async (): Promise<Uint8Array> => {
-    const rot = ((placement.rotation % 360) + 360) % 360;
+  const getRotatedSignatureBytes = async (rotation: number): Promise<Uint8Array> => {
+    const rot = ((rotation % 360) + 360) % 360;
 
     const response = await fetch(signatureDataUrl);
     const originalBytes = new Uint8Array(await response.arrayBuffer());
 
     if (rot === 0) return originalBytes;
 
-    // Load image to get dimensions
     const img = await new Promise<HTMLImageElement>((resolve) => {
       const el = new Image();
       el.onload = () => resolve(el);
@@ -57,39 +55,54 @@ export default function ExportButton({
   };
 
   const handleExport = async () => {
-    if (!renderedPageDimensions) return;
+    if (placements.length === 0) return;
 
     setExporting(true);
     try {
-      // Load from a copy in case the original buffer was detached
+      const canvas = document.querySelector(".react-pdf__Page canvas") as HTMLCanvasElement;
+      const parentDiv = canvas?.closest(".relative") as HTMLElement;
+
       const pdfDoc = await PDFDocument.load(new Uint8Array(pdfBytes));
-      const page = pdfDoc.getPages()[placement.pageIndex];
+      const pages = pdfDoc.getPages();
 
-      // Get the rotated signature image bytes (rotation already baked in)
-      const signatureBytes = await getRotatedSignatureBytes();
-      const signatureImage = await pdfDoc.embedPng(signatureBytes);
+      const rotationCache = new Map<number, Uint8Array>();
 
-      // Coordinate conversion: screen pixels -> PDF points
-      const pdfPageWidth = page.getWidth();
-      const pdfPageHeight = page.getHeight();
-      const scaleX = pdfPageWidth / renderedPageDimensions.width;
-      const scaleY = pdfPageHeight / renderedPageDimensions.height;
+      for (const placement of placements) {
+        const page = pages[placement.pageIndex];
+        if (!page) continue;
 
-      const pdfX = placement.x * scaleX;
-      const pdfWidth = placement.width * scaleX;
-      const pdfHeight = placement.height * scaleY;
-      // FLIP Y-axis: PDF origin is bottom-left, screen origin is top-left
-      const pdfY = pdfPageHeight - placement.y * scaleY - pdfHeight;
+        const rot = ((placement.rotation % 360) + 360) % 360;
+        let signatureBytes = rotationCache.get(rot);
+        if (!signatureBytes) {
+          signatureBytes = await getRotatedSignatureBytes(placement.rotation);
+          rotationCache.set(rot, signatureBytes);
+        }
 
-      // Draw the signature — rotation is already applied to the image
-      page.drawImage(signatureImage, {
-        x: pdfX,
-        y: pdfY,
-        width: pdfWidth,
-        height: pdfHeight,
-      });
+        const signatureImage = await pdfDoc.embedPng(signatureBytes);
 
-      // Save and download
+        const pdfPageWidth = page.getWidth();
+        const pdfPageHeight = page.getHeight();
+
+        // Use actual parent container width for scale computation.
+        // This is the element that Rnd overlays are positioned within,
+        // ensuring pixel-perfect coordinate mapping.
+        const actualWidth = parentDiv?.clientWidth ?? renderWidth;
+        const scale = pdfPageWidth / actualWidth;
+
+        const pdfX = placement.x * scale;
+        const pdfWidth = placement.width * scale;
+        const pdfHeight = placement.height * scale;
+        // FLIP Y-axis: PDF origin is bottom-left, screen origin is top-left
+        const pdfY = pdfPageHeight - placement.y * scale - pdfHeight;
+
+        page.drawImage(signatureImage, {
+          x: pdfX,
+          y: pdfY,
+          width: pdfWidth,
+          height: pdfHeight,
+        });
+      }
+
       const signedPdfBytes = await pdfDoc.save();
       const blob = new Blob([signedPdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
@@ -112,7 +125,7 @@ export default function ExportButton({
   return (
     <button
       onClick={handleExport}
-      disabled={exporting || !renderedPageDimensions}
+      disabled={exporting || placements.length === 0}
       className="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-green-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
     >
       {exporting ? (
