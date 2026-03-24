@@ -3,10 +3,11 @@
 import { useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import SignatureOverlay from "./SignatureOverlay";
+import DateStampOverlay from "./DateStampOverlay";
 
 const PdfViewer = dynamic(() => import("./PdfViewer"), { ssr: false });
 import ExportButton from "./ExportButton";
-import type { SignaturePlacement } from "@/types";
+import type { SignaturePlacement, DateStampPlacement } from "@/types";
 
 interface PdfSignatureEditorProps {
   pdfBytes: Uint8Array;
@@ -32,6 +33,9 @@ export default function PdfSignatureEditor({
     { id: genId(), pageIndex: 0, x: 100, y: 400, width: 200, height: 80, rotation: 0 },
   ]);
   const [selectedId, setSelectedId] = useState<string | null>(signatures[0]?.id ?? null);
+
+  // Date stamps
+  const [dateStamps, setDateStamps] = useState<DateStampPlacement[]>([]);
 
   const handleOverlayUpdate = useCallback(
     (id: string, newPos: { x: number; y: number }, newSize: { width: number; height: number }) => {
@@ -93,6 +97,38 @@ export default function PdfSignatureEditor({
     setSelectedId(newSig.id);
   };
 
+  const handleAddDateStamp = () => {
+    const today = new Date();
+    const dateText = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const newStamp: DateStampPlacement = {
+      id: genId(),
+      pageIndex,
+      x: 300 + Math.random() * 50,
+      y: 80 + Math.random() * 30,
+      fontSize: 28,
+      dateText,
+    };
+    setDateStamps((prev) => [...prev, newStamp]);
+    setSelectedId(newStamp.id);
+  };
+
+  const handleDateStampUpdate = useCallback((id: string, pos: { x: number; y: number }) => {
+    setDateStamps((prev) => prev.map((d) => (d.id === id ? { ...d, x: pos.x, y: pos.y } : d)));
+  }, []);
+
+  const handleDateStampDelete = useCallback((id: string) => {
+    setDateStamps((prev) => prev.filter((d) => d.id !== id));
+    setSelectedId((cur) => (cur === id ? null : cur));
+  }, []);
+
+  const handleDateStampFontSize = useCallback((id: string, fontSize: number) => {
+    setDateStamps((prev) => prev.map((d) => (d.id === id ? { ...d, fontSize } : d)));
+  }, []);
+
+  const handleDateStampTextChange = useCallback((id: string, dateText: string) => {
+    setDateStamps((prev) => prev.map((d) => (d.id === id ? { ...d, dateText } : d)));
+  }, []);
+
   // Click on empty area deselects
   const handleBackgroundClick = () => {
     setSelectedId(null);
@@ -101,6 +137,7 @@ export default function PdfSignatureEditor({
   // Signatures on the current page
   const currentPageSignatures = signatures.filter((s) => s.pageIndex === pageIndex);
   const totalSignatures = signatures.length;
+  const currentPageDateStamps = dateStamps.filter((d) => d.pageIndex === pageIndex);
 
   return (
     <div className="space-y-6">
@@ -113,6 +150,7 @@ export default function PdfSignatureEditor({
           <li>点击签名选中后可旋转、复制、删除</li>
           <li>点击「添加签名」可在当前页添加新签名</li>
           <li>切换页面后添加签名即可在不同页签名</li>
+          <li>点击「添加日期」可在当前页添加日期标注，支持调整字号和日期</li>
         </ul>
       </div>
 
@@ -127,8 +165,20 @@ export default function PdfSignatureEditor({
           </svg>
           添加签名
         </button>
+        <button
+          onClick={handleAddDateStamp}
+          className="flex items-center gap-2 bg-purple-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-purple-700 transition-all"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth="2" />
+            <line x1="16" y1="2" x2="16" y2="6" strokeWidth="2" />
+            <line x1="8" y1="2" x2="8" y2="6" strokeWidth="2" />
+            <line x1="3" y1="10" x2="21" y2="10" strokeWidth="2" />
+          </svg>
+          添加日期
+        </button>
         <span className="text-sm text-gray-500">
-          共 {totalSignatures} 个签名，当前页 {currentPageSignatures.length} 个
+          共 {totalSignatures} 个签名、{dateStamps.length} 个日期，当前页 {currentPageSignatures.length} 个签名、{currentPageDateStamps.length} 个日期
         </span>
       </div>
 
@@ -156,6 +206,20 @@ export default function PdfSignatureEditor({
               onDelete={() => handleDelete(sig.id)}
             />
           ))}
+          {currentPageDateStamps.map((stamp) => (
+            <DateStampOverlay
+              key={stamp.id}
+              dateText={stamp.dateText}
+              fontSize={stamp.fontSize}
+              position={{ x: stamp.x, y: stamp.y }}
+              selected={selectedId === stamp.id}
+              onUpdate={(pos) => handleDateStampUpdate(stamp.id, pos)}
+              onSelect={() => setSelectedId(stamp.id)}
+              onDelete={() => handleDateStampDelete(stamp.id)}
+              onFontSizeChange={(fs) => handleDateStampFontSize(stamp.id, fs)}
+              onDateTextChange={(dt) => handleDateStampTextChange(stamp.id, dt)}
+            />
+          ))}
         </PdfViewer>
       </div>
 
@@ -171,6 +235,7 @@ export default function PdfSignatureEditor({
           pdfBytes={pdfBytes}
           signatureDataUrl={signatureDataUrl}
           placements={signatures}
+          dateStamps={dateStamps}
           renderWidth={PDF_RENDER_WIDTH}
         />
       </div>

@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { PDFDocument } from "pdf-lib";
-import type { SignaturePlacement } from "@/types";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import type { SignaturePlacement, DateStampPlacement } from "@/types";
 
 interface ExportButtonProps {
   pdfBytes: Uint8Array;
   signatureDataUrl: string;
   placements: SignaturePlacement[];
+  dateStamps: DateStampPlacement[];
   renderWidth: number;
 }
 
@@ -15,6 +16,7 @@ export default function ExportButton({
   pdfBytes,
   signatureDataUrl,
   placements,
+  dateStamps,
   renderWidth,
 }: ExportButtonProps) {
   const [exporting, setExporting] = useState(false);
@@ -55,7 +57,7 @@ export default function ExportButton({
   };
 
   const handleExport = async () => {
-    if (placements.length === 0) return;
+    if (placements.length === 0 && dateStamps.length === 0) return;
 
     setExporting(true);
     try {
@@ -103,6 +105,34 @@ export default function ExportButton({
         });
       }
 
+      // Draw date stamps
+      if (dateStamps.length > 0) {
+        const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+        for (const stamp of dateStamps) {
+          const page = pages[stamp.pageIndex];
+          if (!page) continue;
+
+          const pdfPageWidth = page.getWidth();
+          const pdfPageHeight = page.getHeight();
+          const actualWidth = parentDiv?.clientWidth ?? renderWidth;
+          const scale = pdfPageWidth / actualWidth;
+
+          const pdfFontSize = stamp.fontSize * scale;
+          const pdfX = stamp.x * scale;
+          // Approximate text height for Y-flip
+          const textHeight = pdfFontSize;
+          const pdfY = pdfPageHeight - stamp.y * scale - textHeight;
+
+          page.drawText(stamp.dateText, {
+            x: pdfX,
+            y: pdfY,
+            size: pdfFontSize,
+            font,
+            color: rgb(0, 0, 0),
+          });
+        }
+      }
+
       const signedPdfBytes = await pdfDoc.save();
       const blob = new Blob([signedPdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
@@ -125,7 +155,7 @@ export default function ExportButton({
   return (
     <button
       onClick={handleExport}
-      disabled={exporting || placements.length === 0}
+      disabled={exporting || (placements.length === 0 && dateStamps.length === 0)}
       className="flex-1 bg-green-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-green-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
     >
       {exporting ? (

@@ -8,6 +8,15 @@ export interface SignaturePlacement {
   rotation: number;
 }
 
+export interface DateStampPlacement {
+  id: string;
+  pageIndex: number;
+  x: number;
+  y: number;
+  fontSize: number;
+  dateText: string;
+}
+
 export interface PageDimensions {
   width: number;
   height: number;
