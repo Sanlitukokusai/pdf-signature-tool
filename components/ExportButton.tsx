@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
-import type { SignaturePlacement, DateStampPlacement } from "@/types";
+import type { SignaturePlacement, DateStampPlacement, SignatureAsset } from "@/types";
 
 interface ExportButtonProps {
   pdfBytes: Uint8Array;
-  signatureDataUrl: string;
+  signatureAssets: SignatureAsset[];
   placements: SignaturePlacement[];
   dateStamps: DateStampPlacement[];
   renderWidth: number;
@@ -14,15 +14,18 @@ interface ExportButtonProps {
 
 export default function ExportButton({
   pdfBytes,
-  signatureDataUrl,
+  signatureAssets,
   placements,
   dateStamps,
   renderWidth,
 }: ExportButtonProps) {
   const [exporting, setExporting] = useState(false);
 
-  // Pre-rotate the signature image using Canvas so the exported PDF matches the preview.
-  const getRotatedSignatureBytes = async (rotation: number): Promise<Uint8Array> => {
+  // Pre-rotate a signature image using Canvas so the exported PDF matches the preview.
+  const getRotatedSignatureBytes = async (
+    signatureDataUrl: string,
+    rotation: number
+  ): Promise<Uint8Array> => {
     const rot = ((rotation % 360) + 360) % 360;
 
     const response = await fetch(signatureDataUrl);
@@ -67,17 +70,21 @@ export default function ExportButton({
       const pdfDoc = await PDFDocument.load(new Uint8Array(pdfBytes));
       const pages = pdfDoc.getPages();
 
-      const rotationCache = new Map<number, Uint8Array>();
+      // Cache bytes per asset+rotation
+      const rotationCache = new Map<string, Uint8Array>();
 
       for (const placement of placements) {
         const page = pages[placement.pageIndex];
         if (!page) continue;
+        const asset = signatureAssets.find((a) => a.id === placement.signatureId);
+        if (!asset) continue;
 
         const rot = ((placement.rotation % 360) + 360) % 360;
-        let signatureBytes = rotationCache.get(rot);
+        const cacheKey = `${asset.id}_${rot}`;
+        let signatureBytes = rotationCache.get(cacheKey);
         if (!signatureBytes) {
-          signatureBytes = await getRotatedSignatureBytes(placement.rotation);
-          rotationCache.set(rot, signatureBytes);
+          signatureBytes = await getRotatedSignatureBytes(asset.dataUrl, placement.rotation);
+          rotationCache.set(cacheKey, signatureBytes);
         }
 
         const signatureImage = await pdfDoc.embedPng(signatureBytes);
@@ -85,16 +92,12 @@ export default function ExportButton({
         const pdfPageWidth = page.getWidth();
         const pdfPageHeight = page.getHeight();
 
-        // Use actual parent container width for scale computation.
-        // This is the element that Rnd overlays are positioned within,
-        // ensuring pixel-perfect coordinate mapping.
         const actualWidth = parentDiv?.clientWidth ?? renderWidth;
         const scale = pdfPageWidth / actualWidth;
 
         const pdfX = placement.x * scale;
         const pdfWidth = placement.width * scale;
         const pdfHeight = placement.height * scale;
-        // FLIP Y-axis: PDF origin is bottom-left, screen origin is top-left
         const pdfY = pdfPageHeight - placement.y * scale - pdfHeight;
 
         page.drawImage(signatureImage, {
@@ -105,7 +108,6 @@ export default function ExportButton({
         });
       }
 
-      // Draw date stamps
       if (dateStamps.length > 0) {
         const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
         for (const stamp of dateStamps) {
@@ -119,7 +121,6 @@ export default function ExportButton({
 
           const pdfFontSize = stamp.fontSize * scale;
           const pdfX = stamp.x * scale;
-          // Approximate text height for Y-flip
           const textHeight = pdfFontSize;
           const pdfY = pdfPageHeight - stamp.y * scale - textHeight;
 

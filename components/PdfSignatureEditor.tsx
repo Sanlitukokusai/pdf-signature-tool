@@ -7,11 +7,11 @@ import DateStampOverlay from "./DateStampOverlay";
 
 const PdfViewer = dynamic(() => import("./PdfViewer"), { ssr: false });
 import ExportButton from "./ExportButton";
-import type { SignaturePlacement, DateStampPlacement } from "@/types";
+import type { SignaturePlacement, DateStampPlacement, SignatureAsset } from "@/types";
 
 interface PdfSignatureEditorProps {
   pdfBytes: Uint8Array;
-  signatureDataUrl: string;
+  signatureAssets: SignatureAsset[];
   onBack: () => void;
 }
 
@@ -22,70 +22,60 @@ function genId() {
 
 export default function PdfSignatureEditor({
   pdfBytes,
-  signatureDataUrl,
+  signatureAssets,
   onBack,
 }: PdfSignatureEditorProps) {
   const PDF_RENDER_WIDTH = 700;
   const [pageIndex, setPageIndex] = useState(0);
 
-  // Multiple signatures
-  const [signatures, setSignatures] = useState<SignaturePlacement[]>(() => [
-    { id: genId(), pageIndex: 0, x: 100, y: 400, width: 200, height: 80, rotation: 0 },
-  ]);
-  const [selectedId, setSelectedId] = useState<string | null>(signatures[0]?.id ?? null);
+  const [activeAssetId, setActiveAssetId] = useState<string>(signatureAssets[0]?.id ?? "");
 
-  // Date stamps
+  const [signatures, setSignatures] = useState<SignaturePlacement[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dateStamps, setDateStamps] = useState<DateStampPlacement[]>([]);
+
+  const assetById = (id: string) => signatureAssets.find((a) => a.id === id);
 
   const handleOverlayUpdate = useCallback(
     (id: string, newPos: { x: number; y: number }, newSize: { width: number; height: number }) => {
       setSignatures((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, x: newPos.x, y: newPos.y, width: newSize.width, height: newSize.height } : s))
+        prev.map((s) =>
+          s.id === id ? { ...s, x: newPos.x, y: newPos.y, width: newSize.width, height: newSize.height } : s
+        )
       );
     },
     []
   );
 
   const handleRotate = useCallback((id: string, rotation: number) => {
-    setSignatures((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, rotation } : s))
-    );
+    setSignatures((prev) => prev.map((s) => (s.id === id ? { ...s, rotation } : s)));
   }, []);
 
-  const handleCopy = useCallback(
-    (id: string) => {
-      setSignatures((prev) => {
-        const source = prev.find((s) => s.id === id);
-        if (!source) return prev;
-        const newSig: SignaturePlacement = {
-          ...source,
-          id: genId(),
-          x: source.x + 20,
-          y: source.y + 20,
-        };
-        setSelectedId(newSig.id);
-        return [...prev, newSig];
-      });
-    },
-    []
-  );
+  const handleCopy = useCallback((id: string) => {
+    setSignatures((prev) => {
+      const source = prev.find((s) => s.id === id);
+      if (!source) return prev;
+      const newSig: SignaturePlacement = {
+        ...source,
+        id: genId(),
+        x: source.x + 20,
+        y: source.y + 20,
+      };
+      setSelectedId(newSig.id);
+      return [...prev, newSig];
+    });
+  }, []);
 
-  const handleDelete = useCallback(
-    (id: string) => {
-      setSignatures((prev) => {
-        const updated = prev.filter((s) => s.id !== id);
-        return updated;
-      });
-      setSelectedId((currentSelected) =>
-        currentSelected === id ? null : currentSelected
-      );
-    },
-    []
-  );
+  const handleDelete = useCallback((id: string) => {
+    setSignatures((prev) => prev.filter((s) => s.id !== id));
+    setSelectedId((cur) => (cur === id ? null : cur));
+  }, []);
 
   const handleAddSignature = () => {
+    if (!activeAssetId) return;
     const newSig: SignaturePlacement = {
       id: genId(),
+      signatureId: activeAssetId,
       pageIndex,
       x: 100 + Math.random() * 50,
       y: 300 + Math.random() * 50,
@@ -129,41 +119,62 @@ export default function PdfSignatureEditor({
     setDateStamps((prev) => prev.map((d) => (d.id === id ? { ...d, dateText } : d)));
   }, []);
 
-  // Click on empty area deselects
-  const handleBackgroundClick = () => {
-    setSelectedId(null);
-  };
+  const handleBackgroundClick = () => setSelectedId(null);
 
-  // Signatures on the current page
   const currentPageSignatures = signatures.filter((s) => s.pageIndex === pageIndex);
-  const totalSignatures = signatures.length;
   const currentPageDateStamps = dateStamps.filter((d) => d.pageIndex === pageIndex);
 
   return (
     <div className="space-y-6">
-      {/* Instructions */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
         <p className="font-medium mb-1">操作说明：</p>
         <ul className="list-disc list-inside space-y-0.5 text-blue-600">
-          <li>拖拽签名调整位置</li>
-          <li>拖拽签名角落调整大小</li>
+          <li>先在下方选择要使用的签名，再点击「添加签名」放到当前页</li>
+          <li>拖拽签名调整位置、拖拽角落调整大小</li>
           <li>点击签名选中后可旋转、复制、删除</li>
-          <li>点击「添加签名」可在当前页添加新签名</li>
-          <li>切换页面后添加签名即可在不同页签名</li>
+          <li>切换页面后再次添加，可在不同页放置不同签名</li>
           <li>点击「添加日期」可在当前页添加日期标注，支持调整字号和日期</li>
         </ul>
       </div>
 
-      {/* Add signature button + count */}
-      <div className="flex items-center gap-3">
+      {/* Signature palette */}
+      <div className="bg-white border rounded-xl p-4">
+        <p className="text-sm font-medium text-gray-700 mb-3">
+          选择签名 (共 {signatureAssets.length} 个)
+        </p>
+        <div className="flex flex-wrap gap-3">
+          {signatureAssets.map((asset, idx) => {
+            const isActive = asset.id === activeAssetId;
+            return (
+              <button
+                key={asset.id}
+                onClick={() => setActiveAssetId(asset.id)}
+                className={`flex flex-col items-center gap-1 border-2 rounded-lg p-2 transition-all ${
+                  isActive ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-400"
+                }`}
+                title={asset.name}
+              >
+                <div className="w-24 h-14 flex items-center justify-center bg-white rounded">
+                  <img src={asset.dataUrl} alt={asset.name}
+                    className="max-w-full max-h-full object-contain" />
+                </div>
+                <span className="text-xs text-gray-600">签名 #{idx + 1}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={handleAddSignature}
-          className="flex items-center gap-2 bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 transition-all"
+          disabled={!activeAssetId}
+          className="flex items-center gap-2 bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 transition-all disabled:opacity-40"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-          添加签名
+          添加签名到当前页
         </button>
         <button
           onClick={handleAddDateStamp}
@@ -178,11 +189,10 @@ export default function PdfSignatureEditor({
           添加日期
         </button>
         <span className="text-sm text-gray-500">
-          共 {totalSignatures} 个签名、{dateStamps.length} 个日期，当前页 {currentPageSignatures.length} 个签名、{currentPageDateStamps.length} 个日期
+          共 {signatures.length} 个签名、{dateStamps.length} 个日期，当前页 {currentPageSignatures.length} 个签名、{currentPageDateStamps.length} 个日期
         </span>
       </div>
 
-      {/* PDF Viewer with Signature Overlays */}
       <div onClick={handleBackgroundClick}>
         <PdfViewer
           pdfBytes={pdfBytes}
@@ -191,21 +201,25 @@ export default function PdfSignatureEditor({
           onPageRenderSuccess={() => {}}
           width={PDF_RENDER_WIDTH}
         >
-          {currentPageSignatures.map((sig) => (
-            <SignatureOverlay
-              key={sig.id}
-              signatureDataUrl={signatureDataUrl}
-              position={{ x: sig.x, y: sig.y }}
-              size={{ width: sig.width, height: sig.height }}
-              rotation={sig.rotation}
-              selected={selectedId === sig.id}
-              onUpdate={(pos, size) => handleOverlayUpdate(sig.id, pos, size)}
-              onRotate={(r) => handleRotate(sig.id, r)}
-              onSelect={() => setSelectedId(sig.id)}
-              onCopy={() => handleCopy(sig.id)}
-              onDelete={() => handleDelete(sig.id)}
-            />
-          ))}
+          {currentPageSignatures.map((sig) => {
+            const asset = assetById(sig.signatureId);
+            if (!asset) return null;
+            return (
+              <SignatureOverlay
+                key={sig.id}
+                signatureDataUrl={asset.dataUrl}
+                position={{ x: sig.x, y: sig.y }}
+                size={{ width: sig.width, height: sig.height }}
+                rotation={sig.rotation}
+                selected={selectedId === sig.id}
+                onUpdate={(pos, size) => handleOverlayUpdate(sig.id, pos, size)}
+                onRotate={(r) => handleRotate(sig.id, r)}
+                onSelect={() => setSelectedId(sig.id)}
+                onCopy={() => handleCopy(sig.id)}
+                onDelete={() => handleDelete(sig.id)}
+              />
+            );
+          })}
           {currentPageDateStamps.map((stamp) => (
             <DateStampOverlay
               key={stamp.id}
@@ -223,7 +237,6 @@ export default function PdfSignatureEditor({
         </PdfViewer>
       </div>
 
-      {/* Action buttons */}
       <div className="flex gap-3">
         <button
           onClick={onBack}
@@ -233,7 +246,7 @@ export default function PdfSignatureEditor({
         </button>
         <ExportButton
           pdfBytes={pdfBytes}
-          signatureDataUrl={signatureDataUrl}
+          signatureAssets={signatureAssets}
           placements={signatures}
           dateStamps={dateStamps}
           renderWidth={PDF_RENDER_WIDTH}

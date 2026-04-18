@@ -1,5 +1,13 @@
+export interface SignatureAsset {
+  id: string;
+  name: string;
+  dataUrl: string;
+  threshold: number;
+}
+
 export interface SignaturePlacement {
   id: string;
+  signatureId: string;
   pageIndex: number;
   x: number;
   y: number;
@@ -23,13 +31,3 @@ export interface PageDimensions {
 }
 
 export type AppStep = 1 | 2 | 3;
-
-export interface AppState {
-  step: AppStep;
-  pdfFile: File | null;
-  pdfBytes: Uint8Array | null;
-  signatureImageFile: File | null;
-  extractedSignatureDataUrl: string | null;
-  signaturePlacements: SignaturePlacement[];
-  renderedPageDimensions: PageDimensions | null;
-}
